@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::mem;
+use std::net::SocketAddr;
 
 use http;
 use hyper::Body;
@@ -31,12 +32,13 @@ where
 
 #[derive(Debug)]
 pub(crate) struct Route {
+    remote_addr: SocketAddr,
     req: Request,
     segments_index: usize,
 }
 
 impl Route {
-    pub(crate) fn new(req: Request) -> RefCell<Route> {
+    pub(crate) fn new(req: Request, remote_addr: SocketAddr) -> RefCell<Route> {
         debug_assert_eq!(
             req.uri().path().as_bytes()[0],
             b'/',
@@ -44,6 +46,7 @@ impl Route {
         );
 
         RefCell::new(Route {
+            remote_addr,
             req,
             // always start at 1, since paths are `/...`.
             segments_index: 1,

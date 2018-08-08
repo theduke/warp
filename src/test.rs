@@ -204,7 +204,7 @@ impl RequestBuilder {
         // TODO: de-duplicate this and apply_filter()
         assert!(!route::is_set(), "nested test filter calls");
 
-        let route = Route::new(self.req);
+        let route = Route::new(self.req, ([0; 4], 0).into());
         let mut fut = route::set(&route, move || f.filter())
             .map(|rep| rep.into_response())
             .or_else(|rej| Ok(rej.into_response()))
@@ -233,7 +233,7 @@ impl RequestBuilder {
     {
         assert!(!route::is_set(), "nested test filter calls");
 
-        let route = Route::new(self.req);
+        let route = Route::new(self.req, ([0; 4], 0).into());
         let mut fut = route::set(&route, move || f.filter());
         let fut = future::poll_fn(move || {
             route::set(&route, || fut.poll())

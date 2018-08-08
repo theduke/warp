@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::{Async, Future, Poll};
-use hyper::{rt, Server as HyperServer};
+use futures::{Async, Future, Poll, Stream, stream};
+use hyper::{rt, server::conn::Http};
 use hyper::service::{service_fn};
 
 use ::never::Never;
@@ -55,7 +55,40 @@ where
     /// Returns the bound address and a `Future` that can be executed on
     /// any runtime.
     pub fn bind_ephemeral(self, addr: impl Into<SocketAddr> + 'static) -> (SocketAddr, impl Future<Item=(), Error=()> + 'static) {
+        let dummy_svc = || {
+            service_fn(|_req| {
+                Ok::<_, ::hyper::Error>(::http::Response::<::hyper::Body>::default())
+            })
+        };
+        let mut serve_addr = Http::new()
+            .serve_addr(&addr.into(), dummy_svc)
+            .expect("binding to address");
+        let addr = serve_addr.incoming_ref().local_addr();
+
+        let incoming = stream::poll_fn(move || {
+            serve_addr.incoming_mut().poll()
+        });
+
+        let mut http = Http::new();
+        http.pipeline_flush(true);
         let inner = Arc::new(self.service.into_warp_service());
+        let srv = incoming
+            .for_each(move |io| {
+                let remote_addr = io.remote_addr();
+                let inner = inner.clone();
+                let svc = service_fn(move |req| {
+                    ReplyFuture {
+                        inner: inner.call(req, remote_addr)
+                    }
+                });
+                let conn = http.serve_connection(io, svc);
+                rt::spawn(conn.map_err(|e| debug!("connection error: {}", e)));
+                Ok(())
+            })
+            .map_err(|e| debug!("server error: {}", e));
+
+        (addr, srv)
+        /*
         let service = move || {
             let inner = inner.clone();
             service_fn(move |req| {
@@ -69,6 +102,7 @@ where
             .serve(service);
         let addr = srv.local_addr();
         (addr, srv.map_err(|e| error!("server error: {}", e)))
+        */
     }
 
     // Generally shouldn't be used, as it can slow down non-pipelined responses.
@@ -88,7 +122,7 @@ pub trait IntoWarpService {
 
 pub trait WarpService {
     type Reply: Future + Send;
-    fn call(&self, req: Request) -> Self::Reply;
+    fn call(&self, req: Request, remote_addr: SocketAddr) -> Self::Reply;
 }
 
 
